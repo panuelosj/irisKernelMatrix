@@ -1,0 +1,419 @@
+// stuff goes here
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
+#include <math.h>
+#define MAX_LINE 30000					//max chars in a line
+#define MAX_CHRON 1
+#define MAX_EPOCH 200
+#define MAX_PERIOD 5		//50
+#define MAX_EON 1
+#define MAX_ARR_ROWS 500
+#define MAX_ARR_COLS 50
+
+#define NUMB_ROWS 100		//150
+#define NUMB_TRAIN 100		//150
+#define NUMB_COLS 794		//7
+#define NET_LAYERS 3
+#define NET_NPL	784			//7			//neurons per layer
+#define NET_NUR_IN 784		//4
+#define NET_NUR_OUT 10		//3
+
+int readCSV(const char filename[], float **arrayWrite, const int lengthRow, const int lengthCol);
+int writeCSV(const char filename[], float arrayIn[][MAX_ARR_COLS], const int lengthRow, const int lengthCol);
+float arrayAverageRow(float arrayIn[][MAX_ARR_COLS], const int rowNumber, const int lengthCol);
+void createRandomSort(int randomSort[], const int lengthRow);
+void normalize(float **arrayIn, float **arrayOut, const int lengthRow, const int lengthCol);
+void feed(float input[], int layerIndex[], float ***weights, float **workingArray, float answer[]);
+void backProp(float predictedAnswer[], float trueAnswer[], int layerIndex[], float ***weights, float ***weightsOld, float **workingArray, const float learnRate, const float momentum);
+
+int arrayMaxIndex(float arrayIn[], int arrayLength);
+float sigmoid(float argument);
+float** allocateArray2D(int lengthRow, int lengthCol);
+float*** allocateArray3D(int dim1, int dim2, int dim3);
+
+int main()
+{
+	int i, j, k;
+
+	// arrays for reading/holding data set
+	float** dataSet = allocateArray2D(NUMB_ROWS, NUMB_COLS);
+	float** normalizedDataSet = allocateArray2D(NUMB_ROWS, NUMB_COLS);
+
+	// arrays for neural net
+	float*** weights = allocateArray3D(NET_LAYERS, NET_NPL+1, NET_NPL);
+	float*** weightsOld = allocateArray3D(NET_LAYERS, NET_NPL+1, NET_NPL);
+	float** workingArray = allocateArray2D(NET_LAYERS, NET_NPL);
+
+	//---------------------------------------VARIABLE NAMES---------------------------------------
+	int layerIndex[NET_LAYERS] = { NET_NUR_IN,50,NET_NUR_OUT };
+
+	// arrays for reading/holding data set
+	int randomSort[NUMB_ROWS];									//index of randomly sorted single-occuring integers
+
+																// arrays for passing in/out between functions
+	float input[NET_NUR_IN];
+	float predictedAnswer[NET_NUR_OUT];
+	float trueAnswer[NET_NUR_OUT];
+
+	// arrays for neural net
+	int err = 0;												//error flag
+	int finalAnswer, finalTrueAnswer;
+
+	// counters
+	int tChron, tEpoch, tPeriod, tDiag;
+	// diagnostic vars
+	float meanSqrdError, totalMSE;
+	int accuracy;
+
+	// output file arrays
+	float outputFile[MAX_EPOCH][MAX_PERIOD];
+	float outputAccuracy[MAX_EPOCH][MAX_ARR_COLS];
+	float outputMSE[MAX_EPOCH][MAX_ARR_COLS];
+	float outputMSEDiagnostic[MAX_EPOCH][MAX_ARR_COLS];
+
+	// parameters
+	const float maxMSE = 0.01, targetAccuracy = 0.98, targetMSE = 2.0;
+	float learnRate = 0.1, momentum = 0.03;
+
+	printf("Arrays built\n");
+	system("cat nagato");
+	//---------------------------------------ACTUAL CODE---------------------------------------
+	srand(time(NULL));
+
+	// import data
+	readCSV("mnist_train_100_ok.csv", dataSet, NUMB_ROWS, NUMB_COLS);
+	//err = err || readCSV("iris_data.csv", dataSet, NUMB_ROWS, NUMB_COLS);
+	if (err == 1) {
+		printf("\nFailed to open file!\nPress ENTER to end program...\n");
+		getchar();
+		return -1;
+	}
+	printf("File read successful!\n");
+
+	//process
+	normalize(dataSet, normalizedDataSet, NUMB_ROWS, NUMB_COLS);
+
+	tDiag = 0;
+	while (tDiag < MAX_EON) {
+		tPeriod = 0;
+		while (tPeriod < MAX_PERIOD) {
+			//initialize weights
+			for (i = 0; i < NET_LAYERS; i++)
+				for (j = 0; j < NET_NPL + 1; j++)
+					for (k = 0; k < NET_NPL; k++) {
+						weights[i][j][k] = ((float)rand()*2.0 / (float)RAND_MAX) - 1.0;
+						weightsOld[i][j][k] = weights[i][j][k];
+					}
+
+			tEpoch = 0;
+			accuracy = 0;
+			totalMSE = 100000;
+			//TRAIN until net reaches target accuracy
+			while (totalMSE > targetMSE && tEpoch < MAX_EPOCH) {
+				createRandomSort(randomSort, NUMB_ROWS);
+				totalMSE = 0;
+				//TRAIN all sets in one Epoch
+				for (i = 0; i < NUMB_TRAIN; i++) {
+					//load input and expected answers into variable array
+					for (j = 0; j < layerIndex[0]; j++)
+						input[j] = normalizedDataSet[randomSort[i]][j];
+					for (j = 0; j < layerIndex[NET_LAYERS - 1]; j++)
+						trueAnswer[j] = normalizedDataSet[randomSort[i]][j + layerIndex[0]];
+					meanSqrdError = 1;
+					tChron = 0;
+
+					//repeat error correction for one Chron (one training input)
+					while (meanSqrdError > maxMSE && tChron < MAX_CHRON) {
+						feed(input, layerIndex, weights, workingArray, predictedAnswer);
+						backProp(predictedAnswer, trueAnswer, layerIndex, weights, weightsOld, workingArray, learnRate, momentum);
+						meanSqrdError = 0;
+						for (k = 0; k < layerIndex[NET_LAYERS - 1]; k++)
+							meanSqrdError += (predictedAnswer[k] - trueAnswer[k])*(predictedAnswer[k] - trueAnswer[k]);
+						meanSqrdError /= layerIndex[NET_LAYERS - 1];
+						tChron++;
+					}
+					totalMSE += meanSqrdError;
+				}
+
+				//TEST the entire set, count how many are correct
+				accuracy = 0;
+				for (i = 0; i < NUMB_TRAIN; i++) {
+					for (j = 0; j < layerIndex[0]; j++)
+						input[j] = normalizedDataSet[i][j];
+					for (j = 0; j < layerIndex[NET_LAYERS - 1]; j++)
+						trueAnswer[j] = normalizedDataSet[i][j + layerIndex[0]];
+					feed(input, layerIndex, weights, workingArray, predictedAnswer);
+
+					finalAnswer = arrayMaxIndex(predictedAnswer, NET_NUR_OUT);
+					finalTrueAnswer = arrayMaxIndex(trueAnswer, NET_NUR_OUT);
+					if (finalAnswer == finalTrueAnswer)
+						accuracy++;
+				}
+				outputAccuracy[tEpoch][tPeriod] = (float)accuracy;
+				outputMSE[tEpoch][tPeriod] = totalMSE;
+				tEpoch++;
+				if (tEpoch % 12 == 0)
+					printf("\b|");
+				else if (tEpoch % 12 == 3)
+					printf("\b\\");
+				else if (tEpoch % 12 == 6)
+					printf("\b-");
+				else if (tEpoch % 12 == 9)
+					printf("\b/");
+			}
+			printf("\bFINAL %i/%i - over %i Epochs, MSE = %f\n", accuracy, NUMB_TRAIN, tEpoch, totalMSE);
+
+			for (; tEpoch < MAX_EPOCH; tEpoch++) {
+				outputAccuracy[tEpoch][tPeriod] = (float)accuracy;
+				outputMSE[tEpoch][tPeriod] = totalMSE;
+			}
+			tPeriod++;
+		}
+		printf("\bFINISHED %i Periods on Eon %i, learnRate=%f, momentum=%f\n", tPeriod, tDiag, learnRate, momentum);
+		for (i = 0; i < MAX_EPOCH; i++) {
+			outputMSEDiagnostic[i][tDiag] = arrayAverageRow(outputMSE, i, MAX_PERIOD);
+		}
+		tDiag++;
+		//learnRate += 0.1;
+	}
+
+	//final stats and write to file
+	writeCSV("iris_output_stuffs.csv", outputAccuracy, MAX_EPOCH, MAX_ARR_COLS);
+	writeCSV("iris_output_MSE.csv", outputMSE, MAX_EPOCH, MAX_ARR_COLS);
+	writeCSV("iris_output_DiagnosticMSE.csv", outputMSEDiagnostic, MAX_EPOCH, MAX_ARR_COLS);
+	printf("File write successful!\n");
+
+	while (42) {
+		scanf("%i", &i);
+		for (j = 0; j < layerIndex[0]; j++)														//load input numbers and expected answer into variable
+			input[j] = normalizedDataSet[i][j];
+		for (j = 0; j < layerIndex[NET_LAYERS - 1]; j++)
+			trueAnswer[j] = normalizedDataSet[i][j + layerIndex[0]];
+		feed(input, layerIndex, weights, workingArray, predictedAnswer);
+
+		for (i = 0; i < NET_NUR_IN; i++) {
+			printf("%.2f, ", input[i]);
+		} printf("\n\n");
+		for (i = 0; i < NET_NUR_OUT; i++) {
+			printf("%.2f, ", predictedAnswer[i]);
+		} printf("\n");
+		for (i = 0; i < NET_NUR_OUT; i++) {
+			printf("%.2f, ", trueAnswer[i]);
+		} printf("\n");
+	}
+	return 0;
+
+}
+
+//----------------------------------------------------------------------------------------------------------------------//
+//======================================================================================================================//
+//======================================================================================================================//
+//----------------------------------------------------------------------------------------------------------------------//
+
+int readCSV(const char filename[], float **arrayWrite, const int lengthRow, const int lengthCol) {
+	char line[MAX_LINE];
+	int i, j;
+	float temp;
+
+	FILE *stream = fopen(filename, "r");						//input file, read-only
+
+	if (stream == NULL)											//error case
+		return 1;
+
+	for (i = 0; i < lengthRow; i++) {
+		fgets(line, MAX_LINE, stream);							//grabs next line of stream
+
+		temp = atof(strtok(line, ",\n"));							//convert to float, everything before comma delimiter
+		for (j = 0; j < (lengthCol - 1); j++) {
+			arrayWrite[i][j] = temp;									//save float in matrix
+			temp = atof(strtok(NULL, ",\n"));						//keep reading from last position
+		}
+		arrayWrite[i][j] = temp;										//save last line
+	}
+	fclose(stream);
+	return 0;
+}
+int writeCSV(const char filename[], float arrayIn[][MAX_ARR_COLS], const int lengthRow, const int lengthCol) {
+	char line[MAX_LINE];
+	int i, j;
+	float temp;
+
+	FILE *stream = fopen(filename, "w");
+
+	for (i = 0; i < lengthRow; i++) {
+		for (j = 0; j < lengthCol; j++) {
+			if (arrayIn[i][j] > 0)							// check if input makes sense
+				fprintf(stream, "%f", arrayIn[i][j]);
+			fprintf(stream, ",");
+		}
+		fprintf(stream, "\n");
+	}
+	fclose(stream);
+	return 1;
+}
+int arrayMaxIndex(float arrayIn[], int arrayLength) {
+	int i, imax = 0;
+	float max = 0;
+	for (i = 0; i < arrayLength; i++) {
+		if (arrayIn[i] > max) {
+			max = arrayIn[i];
+			imax = i;
+		}
+	}
+	return imax;
+}
+float arrayAverageRow(float arrayIn[][MAX_ARR_COLS], const int rowNumber, const int lengthCol) {
+	int j;
+	float sum = 0;
+	for (j = 0; j < lengthCol; j++)
+		sum += arrayIn[rowNumber][j];
+	return (sum / lengthCol);
+}
+void createRandomSort(int randomSort[], const int lengthRow) {
+	int i, inew, iold;
+	for (i = 0; i < lengthRow; i++)					//create ordered index list 1->total
+		randomSort[i] = i;
+	for (i = 0; i < lengthRow; i++) {					//swap each index with a random index
+		inew = rand() % lengthRow;
+		iold = randomSort[i];
+		randomSort[i] = randomSort[inew];
+		randomSort[inew] = iold;
+	}
+}
+void normalize(float **arrayIn, float **arrayOut, const int lengthRow, const int lengthCol) {
+	int i, j;
+	for (j = 0; j < NET_NUR_IN; j++) {							//normalizes inputs based on standard score
+		float sum = 0.0;
+		float mean = 0.0;
+		float variance = 0.0;
+		float sd = 0.0;
+		//int flagZero = 0;
+
+		for (i = 0; i < lengthRow; i++)
+			sum += arrayIn[i][j];
+		mean = sum / lengthRow;
+		if (mean != 0) {
+			for (i = 0; i < lengthRow; i++)
+				variance += ((arrayIn[i][j] - mean)*(arrayIn[i][j] - mean));
+			sd = sqrt(variance / lengthRow);
+
+			for (i = 0; i < lengthRow; i++)
+				arrayOut[i][j] = ((arrayIn[i][j] - mean) / sd);
+		}
+		else
+			for (i = 0; i < lengthRow; i++)
+				arrayOut[i][j] = 0;
+	}
+
+	for (j = NET_NUR_IN; j < NUMB_COLS; j++)					//copies answer key without normalizing
+		for (i = 0; i < lengthRow; i++)
+			arrayOut[i][j] = arrayIn[i][j];
+}
+void feed(float input[], int layerIndex[], float ***weights, float **workingArray, float answer[]) {
+	int layer, neuron, j;
+	float sum;
+	//working matrix defined as [layer number][neuron number]
+	//where layer 0=input, neuron 0=first neuron
+	for (neuron = 0; neuron < layerIndex[0]; neuron++)								//load input onto matrix at layer 0
+		workingArray[0][neuron] = input[neuron];
+	workingArray[0][layerIndex[0]] = 1.0;
+	for (layer = 1; layer < NET_LAYERS; layer++) {									//calculate matrix moving forwards
+		workingArray[layer][layerIndex[layer]] = 1.0;
+		for (neuron = 0; neuron < layerIndex[layer]; neuron++) {
+			sum = 0;
+			for (j = 0; j < layerIndex[layer - 1] + 1; j++)
+				sum += (weights[layer][neuron][j] * workingArray[layer - 1][j]);
+			workingArray[layer][neuron] = sigmoid(sum);
+		}
+	}
+	for (neuron = 0; neuron < layerIndex[NET_LAYERS - 1]; neuron++)
+		answer[neuron] = workingArray[NET_LAYERS - 1][neuron];
+}
+void backProp(float predictedAnswer[], float trueAnswer[], int layerIndex[], float ***weights, float ***weightsOld, float **workingArray, const float learnRate, const float momentum) {
+	int layer, neuron, j;
+	float error, oldWeight, sumErrorProp;
+	float layerError[NET_NPL];
+
+	layer = NET_LAYERS - 1;
+	for (neuron = 0; neuron < layerIndex[layer]; neuron++) {
+		error = predictedAnswer[neuron] * (1 - predictedAnswer[neuron]) * (trueAnswer[neuron] - predictedAnswer[neuron]);
+		//error = (trueAnswer[neuron] - predictedAnswer[neuron]);
+		layerError[neuron] = error;
+		for (j = 0; j < layerIndex[layer - 1] + 1; j++) {
+			oldWeight = weightsOld[layer][neuron][j];
+			weightsOld[layer][neuron][j] = weights[layer][neuron][j];
+			weights[layer][neuron][j] = weights[layer][neuron][j] + (1.0 - momentum)*learnRate*error*workingArray[layer - 1][j] + momentum*(weights[layer][neuron][j] - oldWeight);
+		}
+	}
+	for (layer = NET_LAYERS - 2; layer > 0; layer--) {
+		for (neuron = 0; neuron < layerIndex[layer]; neuron++) {
+			sumErrorProp = 0;
+			for (j = 0; j < layerIndex[layer + 1]; j++)
+				sumErrorProp += layerError[j] * weightsOld[layer][j][neuron];
+			error = workingArray[layer][neuron] * (1 - workingArray[layer][neuron]) * sumErrorProp;
+			//error = sumErrorProp;
+			layerError[neuron] = error;
+			for (j = 0; j < layerIndex[layer - 1] + 1; j++) {
+				oldWeight = weightsOld[layer][neuron][j];
+				weightsOld[layer][neuron][j] = weights[layer][neuron][j];
+				weights[layer][neuron][j] = weights[layer][neuron][j] + (1.0 - momentum)*learnRate*error*workingArray[layer - 1][j] + momentum*(weights[layer][neuron][j] - oldWeight);
+			}
+		}
+	}
+}
+float sigmoid(float argument) {
+	return (1.0 / (1.0 + exp(-1.0*argument)));
+}
+
+float** allocateArray2D(int lengthRow, int lengthCol) {
+	int i, j;
+	float** newArray;
+	newArray = (float **)malloc(lengthRow*sizeof(float *));
+	if (newArray == NULL)
+		printf("Malloc failed!");
+	for (i = 0; i < lengthRow; i++) {
+		newArray[i] = (float *)malloc(lengthCol*sizeof(float));
+		if (newArray[i] == NULL)
+			printf("Malloc failed!");
+	}
+	return newArray;
+}
+float*** allocateArray3D(int dim1, int dim2, int dim3) {
+	int i, j, k;
+	float*** newArray;
+	newArray = (float ***)malloc(dim1*sizeof(float **));
+	if (newArray == NULL)
+		printf("Malloc failed!");
+	for (i = 0; i < dim1; i++) {
+		newArray[i] = (float **)malloc(dim2*sizeof(float *));
+		if (newArray[i] == NULL)
+			printf("Malloc failed!");
+		for (j = 0; j < dim2; j++) {
+			newArray[i][j] = (float *)malloc(dim3*sizeof(float));
+			if (newArray[i][j] == NULL)
+				printf("Malloc failed!");
+		}
+	}
+	return newArray;
+}
+/*float** allocateArray2D(int lengthRow, int lengthCol) {
+	int i, j;
+	float** newArray;
+	newArray = (float **)malloc(sizeof(float *)*lengthRow);
+	for (i = 0; i < lengthRow; i++)
+		newArray[i] = (float *)malloc(sizeof(float)*lengthCol);
+	return newArray;
+}
+float*** allocateArray3D(int dim1, int dim2, int dim3) {
+	int i, j, k;
+	float*** newArray;
+	newArray = (float ***)malloc(sizeof(float **)*dim1);
+	for (i = 0; i < dim1; i++) {
+		newArray[i] = (float **)malloc(sizeof(float *)*dim2);
+		for (j = 0; j < dim2; j++)
+			newArray[i][j] = (float *)malloc(sizeof(float)*dim3);
+	}
+	return newArray;
+}*/

@@ -1,0 +1,564 @@
+// stuff goes here
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
+#include <math.h>
+#include "cpgplot.h"
+
+#define MAX_LINE 30000					//max chars in a line
+#define MAX_CHRON 1
+#define MAX_EPOCH 200
+#define MAX_PERIOD 1		//50
+#define MAX_EON 1
+#define MAX_ARR_ROWS 500
+#define MAX_ARR_COLS 50
+
+#define NUMB_ROWS 100		//150
+#define NUMB_TRAIN 100		//150
+#define NUMB_COLS 794		//7
+#define NET_LAYERS 3
+#define NET_NPL	784			//7			//neurons per layer
+#define NET_NUR_IN 784		//4
+#define NET_NUR_OUT 10		//3
+
+#define X_MIN 0.0
+#define X_MAX 28.0
+#define Y_MIN 0.0
+#define Y_MAX 28.0
+
+typedef struct {float*** weights; float*** weightsOld; float** bias; float** biasOld; } nn;
+// typedef struct {float**}
+
+// making arrays and mem management
+float** allocateArray2D(int lengthRow, int lengthCol);									// generic array allocation
+float*** allocateArray3D(int dim1, int dim2, int dim3);
+float** makeNetArray(int layerIndex[], const int numbLayers);							// specific array allocation
+float*** makeWeightsArray(int layerIndex[], const int numbLayers);
+void randomizeNet(nn net, int layerIndex[], const int numbLayers);						// inits weights as random between 0 and 1
+
+// importing data
+float** readCSV(const char filename[], const int lengthRow, const int lengthCol);
+int writeCSV(const char filename[], float arrayIn[][MAX_ARR_COLS], const int lengthRow, const int lengthCol);
+
+// outputting data
+void printWeights(float*** weights, int layerIndex[], const int numbLayers);
+
+// data processing
+void normalize(float **arrayIn, float **arrayOut, const int lengthRow, const int lengthCol);
+void createRandomSort(int randomSort[], const int lengthRow);
+float arrayAverageRow(float arrayIn[][MAX_ARR_COLS], const int rowNumber, const int lengthCol);
+int arrayMaxIndex(float arrayIn[], int arrayLength);
+
+// neural net stuffs
+void feed(float input[], int layerIndex[], nn net, float **workingArray, float answer[]);
+void backProp(float predictedAnswer[], float trueAnswer[], int layerIndex[], nn net, float **workingArray, const float learnRate, const float momentum);
+float sigmoid(float argument);
+
+
+int main()
+{
+	//============================================================================================
+	//----------------------------------VARIABLE INITIALIZATION-----------------------------------
+	//============================================================================================
+	int i, j, k;
+
+	// defining number of neurons in each layer
+	int layerIndex[NET_LAYERS] = { NET_NUR_IN,50,NET_NUR_OUT };
+
+	// arrays for neural net
+	nn net1;
+	net1.bias = makeNetArray(layerIndex, NET_LAYERS);
+	net1.biasOld = makeNetArray(layerIndex, NET_LAYERS);
+	net1.weights = makeWeightsArray(layerIndex, NET_LAYERS);
+	net1.weightsOld = makeWeightsArray(layerIndex, NET_LAYERS);
+	float** workingArray = makeNetArray(layerIndex, NET_LAYERS);
+
+	// arrays for reading/holding data set
+	int randomSort[NUMB_ROWS];									//index of randomly sorted single-occuring integers
+
+	// arrays for passing in/out between functions
+	float input[NET_NUR_IN];
+	float plotNumb[NET_NUR_IN];
+	float predictedAnswer[NET_NUR_OUT];
+	float trueAnswer[NET_NUR_OUT];
+
+	// arrays for neural net
+	int err = 0;												//error flag
+	int finalAnswer, finalTrueAnswer;
+
+	// counters
+	int tChron, tEpoch, tPeriod, tEon;
+	// diagnostic vars
+	float meanSqrdError, totalMSE;
+	int accuracy;
+
+	// output file arrays
+	float outputFile[MAX_EPOCH][MAX_PERIOD];
+	float outputAccuracy[MAX_EPOCH][MAX_ARR_COLS];
+	float outputMSE[MAX_EPOCH][MAX_ARR_COLS];
+	float outputMSEDiagnostic[MAX_EPOCH][MAX_ARR_COLS];
+	
+	// pgplot
+	float TR[6] = {0, 1, 0, 0, 0, 1};
+
+	// parameters
+	const float maxMSE = 0.01, targetAccuracy = 0.98, targetMSE = 2.0;
+	float learnRate = 0.1, momentum = 0.03;
+
+	printf("Arrays built\n");
+	//system("cat nagato");
+
+	//=========================================================================================
+	//----------------------------------OTHER INITIALIZATIONS----------------------------------
+	//=========================================================================================
+	
+	// initialize random seed
+	srand(time(NULL));
+
+	// initialize pgplot window
+	if (!cpgopen("/XWINDOW"))
+		return 1;
+	cpgenv(X_MIN, X_MAX, Y_MAX, Y_MIN, 0, 1);
+//	for (i=0; i<256; i++)
+//		cpgscr(i, i/256.0, i/256.0, i/256.0);
+
+	//=========================================================================================
+	//---------------------------------------ACTUAL CODE---------------------------------------
+	//=========================================================================================
+
+	// import data
+	float** dataSet = readCSV("mnist_train_100_ok.csv", NUMB_ROWS, NUMB_COLS);
+	float** normalizedDataSet = allocateArray2D(NUMB_ROWS, NUMB_COLS);
+	normalize(dataSet, normalizedDataSet, NUMB_ROWS, NUMB_COLS);
+
+
+	tEon = 0;
+	while (tEon < MAX_EON) {
+		tPeriod = 0;
+		
+		while (tPeriod < MAX_PERIOD) {
+			randomizeNet(net1, layerIndex, NET_LAYERS);
+			tEpoch = 0; accuracy = 0; totalMSE = 100000;
+			
+			//TRAIN until net reaches target accuracy
+			while (totalMSE > targetMSE && tEpoch < MAX_EPOCH) {
+			
+				createRandomSort(randomSort, NUMB_ROWS);
+				totalMSE = 0;
+				//TRAIN all sets in one Epoch
+				for (i = 0; i < NUMB_TRAIN; i++) {
+					//load input
+					for (j = 0; j < layerIndex[0]; j++)
+						input[j] = normalizedDataSet[randomSort[i]][j];
+						
+					//pgplot
+					//for (j = 0; j < layerIndex[0]; j++)
+						//plotNumb[j] = (float)(dataSet[i][j]);	
+				//	cpggray(plotNumb, 28, 28, 1, 28, 1, 28, 0, 255, TR);
+					
+					//load expected answers
+					for (j = 0; j < layerIndex[NET_LAYERS - 1]; j++)
+						trueAnswer[j] = normalizedDataSet[randomSort[i]][j + layerIndex[0]];
+					meanSqrdError = 1;
+					tChron = 0;
+
+					//repeat error correction for one Chron (one training input)
+					while (meanSqrdError > maxMSE && tChron < MAX_CHRON) {
+						feed(input, layerIndex, net1, workingArray, predictedAnswer);
+						backProp(predictedAnswer, trueAnswer, layerIndex, net1, workingArray, learnRate, momentum);
+						meanSqrdError = 0;
+						for (k = 0; k < layerIndex[NET_LAYERS - 1]; k++)
+							meanSqrdError += (predictedAnswer[k] - trueAnswer[k])*(predictedAnswer[k] - trueAnswer[k]);
+						meanSqrdError /= layerIndex[NET_LAYERS - 1];
+						tChron++;
+					}
+					totalMSE += meanSqrdError;
+				}
+
+				//TEST the entire set, count how many are correct
+				accuracy = 0;
+				for (i = 0; i < NUMB_TRAIN; i++) {
+					for (j = 0; j < layerIndex[0]; j++)
+						input[j] = normalizedDataSet[i][j];
+					for (j = 0; j < layerIndex[NET_LAYERS - 1]; j++)
+						trueAnswer[j] = normalizedDataSet[i][j + layerIndex[0]];
+					feed(input, layerIndex, net1, workingArray, predictedAnswer);
+
+					finalAnswer = arrayMaxIndex(predictedAnswer, NET_NUR_OUT);
+					finalTrueAnswer = arrayMaxIndex(trueAnswer, NET_NUR_OUT);
+					if (finalAnswer == finalTrueAnswer)
+						accuracy++;
+				}
+				outputAccuracy[tEpoch][tPeriod] = (float)accuracy;
+				outputMSE[tEpoch][tPeriod] = totalMSE;
+				tEpoch++;
+				if (tEpoch % 12 == 0)
+					printf("\b|");
+				else if (tEpoch % 12 == 3)
+					printf("\b\\");
+				else if (tEpoch % 12 == 6)
+					printf("\b-");
+				else if (tEpoch % 12 == 9)
+					printf("\b/");
+			}
+			printf("\bFINAL %i/%i - over %i Epochs, MSE = %f\n", accuracy, NUMB_TRAIN, tEpoch, totalMSE);
+			//printWeights(net1.weights, layerIndex, NET_LAYERS);
+
+			for (; tEpoch < MAX_EPOCH; tEpoch++) {
+				outputAccuracy[tEpoch][tPeriod] = (float)accuracy;
+				outputMSE[tEpoch][tPeriod] = totalMSE;
+			}
+			tPeriod++;
+		}
+		printf("\bFINISHED %i Periods on Eon %i, learnRate=%f, momentum=%f\n", tPeriod, tEon, learnRate, momentum);
+		for (i = 0; i < MAX_EPOCH; i++) {
+			outputMSEDiagnostic[i][tEon] = arrayAverageRow(outputMSE, i, MAX_PERIOD);
+		}
+		tEon++;
+		//learnRate += 0.1;
+	}
+
+	//final stats and write to file
+	writeCSV("iris_output_stuffs.csv", outputAccuracy, MAX_EPOCH, MAX_ARR_COLS);
+	writeCSV("iris_output_MSE.csv", outputMSE, MAX_EPOCH, MAX_ARR_COLS);
+	writeCSV("iris_output_DiagnosticMSE.csv", outputMSEDiagnostic, MAX_EPOCH, MAX_ARR_COLS);
+	printf("File write successful!\n");
+
+	while (42) {
+		scanf("%i", &i);
+		for (j = 0; j < layerIndex[0]; j++)														//load input numbers and expected answer into variable
+			input[j] = normalizedDataSet[i][j];
+		for (j = 0; j < layerIndex[NET_LAYERS - 1]; j++)
+			trueAnswer[j] = normalizedDataSet[i][j + layerIndex[0]];
+		feed(input, layerIndex, net1, workingArray, predictedAnswer);
+		
+		
+		//pgplot
+		for (j = 0; j < layerIndex[0]; j++)
+			plotNumb[j] = (float)(dataSet[i][j]);	
+		cpggray(plotNumb, 28, 28, 1, 28, 1, 28, 0, 255, TR);
+
+		/*for (i = 0; i < NET_NUR_IN; i++) {
+			printf("%.2f, ", input[i]);
+		} printf("\n\n");*/
+		for (i = 0; i < NET_NUR_OUT; i++) {
+			printf("%.2f, ", predictedAnswer[i]);
+		} printf("\n");
+		for (i = 0; i < NET_NUR_OUT; i++) {
+			printf("%.2f, ", trueAnswer[i]);
+		} printf("\n");
+	}
+	return 0;
+}
+
+//----------------------------------------------------------------------------------------------------------------------//
+//======================================================================================================================//
+//--------------------------------------------FUNCTIONS-----------------------------------------------------------------//
+//======================================================================================================================//
+//----------------------------------------------------------------------------------------------------------------------//
+
+float** readCSV(const char filename[], const int lengthRow, const int lengthCol) {
+	float** arrayWrite = allocateArray2D(lengthRow, lengthCol);
+
+	char line[MAX_LINE];
+	int i, j;
+	float temp;
+
+	FILE *stream = fopen(filename, "r");						//input file, read-only
+
+	if (stream == NULL)	{
+		system("cat nagato");
+		printf("\nFailed to open %s!\nPress ENTER to end program...\n", filename);
+		getchar();
+		exit(-1);
+	}
+
+	for (i = 0; i < lengthRow; i++) {
+		fgets(line, MAX_LINE, stream);							//grabs next line of stream
+
+		temp = atof(strtok(line, ",\n"));							//convert to float, everything before comma delimiter
+		for (j = 0; j < (lengthCol - 1); j++) {
+			arrayWrite[i][j] = temp;									//save float in matrix
+			temp = atof(strtok(NULL, ",\n"));						//keep reading from last position
+		}
+		arrayWrite[i][j] = temp;										//save last line
+	}
+	fclose(stream);
+	printf("%s read successful!\n", filename);
+	return arrayWrite;
+}
+int writeCSV(const char filename[], float arrayIn[][MAX_ARR_COLS], const int lengthRow, const int lengthCol) {
+	char line[MAX_LINE];
+	int i, j;
+	float temp;
+
+	FILE *stream = fopen(filename, "w");
+
+	for (i = 0; i < lengthRow; i++) {
+		for (j = 0; j < lengthCol; j++) {
+			if (arrayIn[i][j] > 0)							// check if input makes sense
+				fprintf(stream, "%f", arrayIn[i][j]);
+			fprintf(stream, ",");
+		}
+		fprintf(stream, "\n");
+	}
+	fclose(stream);
+	return 1;
+}
+int arrayMaxIndex(float arrayIn[], int arrayLength) {
+	int i, imax = 0;
+	float max = 0;
+	for (i = 0; i < arrayLength; i++) {
+		if (arrayIn[i] > max) {
+			max = arrayIn[i];
+			imax = i;
+		}
+	}
+	return imax;
+}
+float arrayAverageRow(float arrayIn[][MAX_ARR_COLS], const int rowNumber, const int lengthCol) {
+	int j;
+	float sum = 0;
+	for (j = 0; j < lengthCol; j++)
+		sum += arrayIn[rowNumber][j];
+	return (sum / lengthCol);
+}
+void createRandomSort(int randomSort[], const int lengthRow) {
+	int i, inew, iold;
+	for (i = 0; i < lengthRow; i++)					//create ordered index list 1->total
+		randomSort[i] = i;
+	for (i = 0; i < lengthRow; i++) {					//swap each index with a random index
+		inew = rand() % lengthRow;
+		iold = randomSort[i];
+		randomSort[i] = randomSort[inew];
+		randomSort[inew] = iold;
+	}
+}
+
+void normalize(float **arrayIn, float **arrayOut, const int lengthRow, const int lengthCol) {
+	int i, j;
+	for (j = 0; j < NET_NUR_IN; j++) {							//normalizes inputs based on standard score
+		float sum = 0.0;
+		float mean = 0.0;
+		float variance = 0.0;
+		float sd = 0.0;
+		//int flagZero = 0;
+
+		for (i = 0; i < lengthRow; i++)
+			sum += arrayIn[i][j];
+		mean = sum / lengthRow;
+		if (mean != 0) {
+			for (i = 0; i < lengthRow; i++)
+				variance += ((arrayIn[i][j] - mean)*(arrayIn[i][j] - mean));
+			sd = sqrt(variance / lengthRow);
+
+			for (i = 0; i < lengthRow; i++)
+				arrayOut[i][j] = ((arrayIn[i][j] - mean) / sd);
+		}
+		else
+			for (i = 0; i < lengthRow; i++)
+				arrayOut[i][j] = 0;
+	}
+
+	for (j = NET_NUR_IN; j < NUMB_COLS; j++)					//copies answer key without normalizing
+		for (i = 0; i < lengthRow; i++)
+			arrayOut[i][j] = arrayIn[i][j];
+}
+
+void feed(float input[], int layerIndex[], nn net, float **workingArray, float answer[]) {
+	int layer, neuron, j;
+	float sum;
+
+	// working matrix defined as [layer number][neuron number]
+	// weights defined as [layer number][neuron number][neuron connection to layer behind]
+	// where layer 0=input, neuron 0=first neuron
+
+	// load input onto matrix at input layer (0)
+	for (neuron = 0; neuron < layerIndex[0]; neuron++)
+		workingArray[0][neuron] = input[neuron];
+	// insert dummy neuron of 1 for the bias
+	workingArray[0][layerIndex[0]] = 1.0;
+
+	// calculate array starting from first layer after input, moving forwards through layers
+	for (layer = 1; layer < NET_LAYERS; layer++) {
+		// calculate value for each neuron
+		for (neuron = 0; neuron < layerIndex[layer]; neuron++) {
+			sum = 0;
+			for (j = 0; j < (layerIndex[layer-1]); j++)
+				sum += (net.weights[layer][neuron][j] * workingArray[layer-1][j]);
+			sum += net.bias[layer][neuron];
+			workingArray[layer][neuron] = sigmoid(sum);
+		}
+
+		// insert dummy neuron of 1 for the bias
+		workingArray[layer][layerIndex[layer]] = 1.0;
+	}
+
+	// load the last layer into the answer (output) array
+	for (neuron = 0; neuron < layerIndex[NET_LAYERS - 1]; neuron++)
+		answer[neuron] = workingArray[NET_LAYERS - 1][neuron];
+}
+
+void backProp(float predictedAnswer[], float trueAnswer[], int layerIndex[], nn net, float **workingArray, const float learnRate, const float momentum) {
+	int layer, neuron, j;
+	float error, oldWeight, oldBias, sumErrorProp;
+	float layerError[NET_NPL];
+
+	// working matrix defined as [layer number][neuron number]
+	// weights defined as [layer number][neuron number][neuron connection to layer behind]
+	// where layer 0=input, neuron 0=first neuron
+
+	// run error correction for last layer
+	layer = NET_LAYERS - 1;
+	for (neuron = 0; neuron < layerIndex[layer]; neuron++) {
+		error = predictedAnswer[neuron] * (1 - predictedAnswer[neuron]) * (trueAnswer[neuron] - predictedAnswer[neuron]);
+		layerError[neuron] = error;
+
+		// change weights of all connections backwards
+		for (j = 0; j < layerIndex[layer - 1]; j++) {
+			oldWeight = net.weightsOld[layer][neuron][j];
+			net.weightsOld[layer][neuron][j] = net.weights[layer][neuron][j];
+			net.weights[layer][neuron][j] += (1.0-momentum)*learnRate*error*workingArray[layer-1][j] + momentum*(net.weights[layer][neuron][j] - oldWeight);
+		}
+
+		// change bias (overall weight)
+		oldBias = net.biasOld[layer][neuron];
+		net.biasOld[layer][neuron] = net.bias[layer][neuron];
+		net.bias[layer][neuron] += (1.0-momentum)*learnRate*error*1.0 + momentum*(net.bias[layer][neuron] - oldBias);				// jth input is just 1 for bias
+	}
+
+	// backpropagate error to preceeding layers
+	for (layer = NET_LAYERS - 2; layer > 0; layer--) {
+		for (neuron = 0; neuron < layerIndex[layer]; neuron++) {
+			// find this neuron's contribution to the errors on the next layer
+			sumErrorProp = 0;
+			for (j = 0; j < layerIndex[layer+1]; j++)
+				sumErrorProp += layerError[j] * net.weightsOld[layer][j][neuron];
+
+			error = workingArray[layer][neuron] * (1 - workingArray[layer][neuron]) * sumErrorProp;
+			layerError[neuron] = error;
+			for (j = 0; j < layerIndex[layer - 1]; j++) {
+				oldWeight = net.weightsOld[layer][neuron][j];
+				net.weightsOld[layer][neuron][j] = net.weights[layer][neuron][j];
+				net.weights[layer][neuron][j] += (1.0-momentum)*learnRate*error*workingArray[layer-1][j] + momentum*(net.weights[layer][neuron][j] - oldWeight);
+			}
+
+			oldBias = net.biasOld[layer][neuron];
+			net.biasOld[layer][neuron] = net.bias[layer][neuron];
+			net.bias[layer][neuron] += (1.0-momentum)*learnRate*error*1.0 + momentum*(net.bias[layer][neuron] - oldBias);			// jth input is just 1 for bias
+		}
+	}
+}
+float sigmoid(float argument) {
+	return (1.0 / (1.0 + exp(-1.0*argument)));
+}
+
+float** allocateArray2D(int lengthRow, int lengthCol) {
+	int i, j;
+	float** newArray;
+	newArray = (float **)malloc(lengthRow*sizeof(float *));
+	if (newArray == NULL)
+		printf("Malloc failed!");
+	for (i = 0; i < lengthRow; i++) {
+		newArray[i] = (float *)malloc(lengthCol*sizeof(float));
+		if (newArray[i] == NULL)
+			printf("Malloc failed!");
+	}
+	return newArray;
+}
+float*** allocateArray3D(int dim1, int dim2, int dim3) {
+	int i, j, k;
+	float*** newArray;
+	newArray = (float ***)malloc(dim1*sizeof(float **));
+	if (newArray == NULL)
+		printf("Malloc failed!");
+	for (i = 0; i < dim1; i++) {
+		newArray[i] = (float **)malloc(dim2*sizeof(float *));
+		if (newArray[i] == NULL)
+			printf("Malloc failed!");
+		for (j = 0; j < dim2; j++) {
+			newArray[i][j] = (float *)malloc(dim3*sizeof(float));
+			if (newArray[i][j] == NULL)
+				printf("Malloc failed!");
+		}
+	}
+	return newArray;
+}
+
+float*** makeWeightsArray(int layerIndex[], const int numbLayers){
+	int i, j, k;
+	//int numbLayers = (sizeof(layerIndex)/sizeof(layerIndex[0]));
+	float*** newArray;
+
+	// create pointer for entire array
+	newArray = (float***)malloc(numbLayers*sizeof(float**));
+	if (newArray == NULL)
+		printf("Malloc failed!");
+
+	// for each layer, create a 2-dimensional array of pointers
+	for(i = 0; i < numbLayers; i++) {
+		newArray[i] = (float**)malloc((layerIndex[i])*sizeof(float*));
+		if (newArray[i] == NULL)
+			printf("Malloc failed!");
+		if (i != 0) {
+			for (j = 0; j < (layerIndex[i]+1); j++) {
+				newArray[i][j] = (float*)malloc((layerIndex[i-1])*sizeof(float));
+				if (newArray[i][j] == NULL)
+					printf("Malloc failed!");
+			}
+		}
+	}
+	// returns pointer
+	return newArray;
+}
+float** makeNetArray(int layerIndex[], const int numbLayers){
+	int i, j;
+	float** newArray;
+	newArray = (float **)malloc(numbLayers*sizeof(float *));
+	if (newArray == NULL)
+		printf("Malloc failed!");
+	for (i = 0; i < numbLayers; i++) {
+		newArray[i] = (float *)malloc(layerIndex[i]*sizeof(float));
+		if (newArray[i] == NULL)
+			printf("Malloc failed!");
+	}
+	return newArray;
+}
+void randomizeNet(nn net, int layerIndex[], const int numbLayers){
+	int i, j, k;
+	//int numbLayers = (sizeof(weights)/sizeof(weights[0]));
+	//printf("%i / %i = %i\n", sizeof(weights), sizeof(weights[0]), numbLayers);
+	//int numbNeurons, numbConnections;
+
+	for (i = 1; i < numbLayers; i++) {
+		//numbNeurons = (sizeof(weights[i])/sizeof(weights[i][0]));
+		for (j = 0; j < (layerIndex[i]); j++) {
+			//numbConnections = (sizeof(weights[i][j])/sizeof(weights[i][j][0]));
+			//printf("size %i:%i:%i\n", numbLayers, numbNeurons, numbConnections);
+			for (k = 0; k < (layerIndex[i-1]); k++) {
+				net.weights[i][j][k] = ((float)rand()*2.0 / (float)RAND_MAX) - 1.0;
+				net.weightsOld[i][j][k] = net.weights[i][j][k];
+			}
+		}
+	}
+	for (i = 1; i < numbLayers; i++) {
+		for (j = 0; j < (layerIndex[i]); j++) {
+			net.bias[i][j] = ((float)rand()*2.0 / (float)RAND_MAX) - 1.0;
+			net.biasOld[i][j] = net.bias[i][j];
+		}
+	}
+}
+void printWeights(float*** weights, int layerIndex[], const int numbLayers){
+	int i, j, k;
+
+	for (i = 1; i < numbLayers; i++) {
+		for (j = 0; j < (layerIndex[i]); j++) {
+			for (k = 0; k < (layerIndex[i-1]); k++) {
+				printf("%.2f ", weights[i][j][k]);
+			}
+			printf("\n");
+		}
+		printf("\n");
+	}
+}
